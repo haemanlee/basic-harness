@@ -1,6 +1,6 @@
 ---
 name: prd-delta-extractor
-description: Extract structured requirements (spec.yaml) and Given/When/Then acceptance criteria from PowerPoint (.pptx) PRDs while only sending CHANGED slides to vision, so token cost scales with the size of the change instead of the size of the deck. Use whenever the PRD/기획서 arrives as .pptx, is a re-uploaded/version-bumped deck, or the user mentions acceptance criteria (AC), requirement drift, or comparing PRD versions — even if they don't say "skill". Runs as a pre-processing step before prd-review's completeness check.
+description: Extract structured requirements (spec.yaml) and Given/When/Then acceptance criteria from PowerPoint (.pptx) PRDs while only sending CHANGED slides to vision, so token cost scales with the size of the change instead of the size of the deck. Use whenever the PRD/기획서 arrives as .pptx, or the user references a filename ending in .pptx, or colloquially says PPT/피피티/파워포인트/슬라이드/장표/덱(deck) in the same breath as 기획서/PRD/요구사항/스펙 (e.g. "기획서 PPT", "PPT 기획서", "슬라이드 자료", "장표로 된 PRD") — colloquial "PPT"/".ppt" almost always means the modern .pptx format in practice, so treat it as a trigger too; if the actual file turns out to be the legacy binary .ppt, ask the user to save it as .pptx first — or the deck is a re-upload/버전업/개정판 of a previous version, or the user mentions acceptance criteria (AC), 인수조건, requirement drift/요구사항 변경, or comparing PRD versions/버전 비교 — even if they don't say "skill". Runs as a pre-processing step before prd-review's completeness check.
 ---
 
 # PRD 델타 추출 (PPTX)
@@ -12,6 +12,8 @@ description: Extract structured requirements (spec.yaml) and Given/When/Then acc
 ## 언제 실행하는가
 
 - PRD/기획서가 `.pptx`로 제공될 때, CLAUDE.md 파이프라인의 [0단계]로 [1단계] `prd-review`보다 **먼저** 실행한다.
+- 파일 자체를 첨부하지 않고 말로만 언급해도 트리거한다. 예: "기획서 PPT 보내드릴게요", "PPT로 된 PRD 검토해줘", "슬라이드 자료 리뷰", "장표 기획서", "버전업된 덱 다시 봐줘", "지난 PPT랑 뭐가 달라졌는지". `.pptx`로 끝나는 파일명이 언급되면 확장자만으로도 트리거 대상이다.
+- 사용자가 습관적으로 "PPT"라고 부르지만 실제 파일이 구버전 바이너리 `.ppt`(97-2003)인 경우, `detect_changes.py`의 슬라이드 XML 해싱은 OOXML(`.pptx`) 구조를 전제하므로 그대로는 동작하지 않는다 — 이때는 `.pptx`로 다른 이름으로 저장 후 다시 달라고 안내한다.
 - 이전 버전 `.pptx`와 `.cache/manifest.json`이 있으면 버전 비교(델타) 모드로 동작한다. 없으면(`first_run: true`) 전체 슬라이드를 1회 처리한다 — 비교 대상이 없으니 당연한 동작이다.
 - PRD가 텍스트/마크다운으로 제공되는 일반적인 경우에는 이 스킬을 건너뛰고 곧바로 `prd-review`를 실행한다.
 
