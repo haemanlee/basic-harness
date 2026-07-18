@@ -1,122 +1,88 @@
 ---
 name: prd-delta-extractor
-description: >-
-  Extract structured requirements and acceptance criteria from PowerPoint (.pptx)
-  PRDs while only sending CHANGED slides to vision, so token cost scales with the
-  size of the change instead of the size of the deck. Use this skill whenever the
-  user has a .pptx PRD/spec, mentions acceptance criteria (AC), requirement drift,
-  comparing PRD versions, a re-uploaded/version-bumped deck, or complains that
-  re-processing the whole deck is too expensive — even if they don't say "skill".
+description: Extract structured requirements (spec.yaml) and Given/When/Then acceptance criteria from PowerPoint (.pptx) PRDs while only sending CHANGED slides to vision, so token cost scales with the size of the change instead of the size of the deck. Use whenever the PRD/기획서 arrives as .pptx, is a re-uploaded/version-bumped deck, or the user mentions acceptance criteria (AC), requirement drift, or comparing PRD versions — even if they don't say "skill". Runs as a pre-processing step before prd-review's completeness check.
 ---
 
-# PRD Delta Extractor
+# PRD 델타 추출 (PPTX)
 
-Turn a version-bumped PowerPoint PRD into a diffable spec plus acceptance criteria,
-touching vision only on the slides that actually changed.
+이 스킬은 버전이 바뀐 PowerPoint PRD를 diff 가능한 `spec.yaml` + 인수조건(AC)으로 변환한다. `.pptx`는 zip으로 묶인 XML이라 git이 유의미하게 diff할 수 없고, 버전이 바뀔 때마다 전체 덱을 vision으로 다시 읽으면 비용이 덱 크기에 비례해 커진다. 그래서 변경 여부를 로컬에서 먼저 판별하고, **실제로 바뀐 슬라이드만** vision에 태운다.
 
-## Why this exists (read once, then follow the rules)
+`prd-review`가 다루는 "PRD 내용이 완전한가"와는 다른 문제를 푼다 — 이 스킬은 "PPTX 포맷에서 구조화된 요구사항을 어떻게 저비용으로 뽑아낼 것인가"를 다룬다. 두 스킬은 순서대로 함께 쓴다: PRD가 `.pptx`면 이 스킬로 먼저 구조화한 뒤, 그 결과(`spec.yaml`/`delta.md`)를 `prd-review` 완전성 체크리스트에 태운다.
 
-A `.pptx` is a zip of XML, so git cannot diff it usefully and re-reading every slide
-through vision on each version bump is what burns tokens. The fix is to keep the
-`.pptx` as the human-facing view and treat an extracted, ID-stable `spec.yaml` as the
-source of truth. Rendering slides to PNG is free (CPU only); tokens are spent **only**
-when a PNG is sent to vision. So detect changes locally first, then look at changed
-slides only.
+## 언제 실행하는가
 
-## Golden rules
+- PRD/기획서가 `.pptx`로 제공될 때, CLAUDE.md 파이프라인의 [0단계]로 [1단계] `prd-review`보다 **먼저** 실행한다.
+- 이전 버전 `.pptx`와 `.cache/manifest.json`이 있으면 버전 비교(델타) 모드로 동작한다. 없으면(`first_run: true`) 전체 슬라이드를 1회 처리한다 — 비교 대상이 없으니 당연한 동작이다.
+- PRD가 텍스트/마크다운으로 제공되는 일반적인 경우에는 이 스킬을 건너뛰고 곧바로 `prd-review`를 실행한다.
 
-1. NEVER read every slide through vision on a version bump. Run the change gate first
-   and open only the slides it reports as changed.
-2. The diffable source of truth is `spec.yaml`, keyed by stable `REQ-####` IDs — not
-   slide order. Commit `spec.yaml` and `.cache/manifest.json` next to the `.pptx`.
-3. Extraction must be reproducible: identical `.pptx` in → identical `spec.yaml` out.
-   Preserve REQ IDs across versions; never renumber a requirement just because a slide
-   moved.
-4. Regenerate acceptance criteria only for requirements whose spec fragment changed.
+## 원칙
 
-## Workflow
+1. 버전이 바뀌었다고 모든 슬라이드를 vision으로 읽지 않는다. 반드시 변경 게이트를 먼저 돌리고, 게이트가 변경으로 보고한 슬라이드만 연다.
+2. diff의 기준은 슬라이드 순서가 아니라 `spec.yaml`의 안정적인 `REQ-####` ID다. `spec.yaml`과 `.cache/manifest.json`은 `.pptx` 옆에 커밋한다.
+3. 추출은 재현 가능해야 한다 — 같은 `.pptx`를 넣으면 같은 `spec.yaml`이 나와야 하고, 슬라이드가 옮겨졌다고 REQ ID를 다시 매기지 않는다.
+4. 인수조건은 스펙 조각이 바뀐 요구사항에 대해서만 재생성한다.
 
-Run the steps in order. Do not skip the gate.
+## 절차
 
-### 1. Render + gate (free, no vision)
+### 1. 변경 게이트 (vision 없이, 무료)
 
 ```bash
 python scripts/detect_changes.py NEW.pptx --cache .cache --out changes.json
 ```
 
-This renders each slide to PNG, hashes it two ways (normalized slide XML, then a
-perceptual dHash of the PNG as a fallback), compares against `.cache/manifest.json`
-from the previous version, and writes `changes.json`:
+슬라이드마다 정규화한 슬라이드 XML 해시와 PNG의 perceptual dHash(폴백)를 이전 매니페스트와 비교해 `changes.json`(`changed`/`unchanged`/`png_dir`/`first_run`)을 만든다.
 
-```json
-{
-  "changed":  [3, 7],        // 1-based slide numbers needing vision
-  "unchanged":[1,2,4,5,6],   // reuse cached spec fragments
-  "png_dir":  ".cache/png",
-  "first_run": false
-}
-```
+### 2. 변경된 슬라이드만 추출 (vision)
 
-On the very first run everything is "changed" (there is nothing to compare to) and
-`first_run` is true — that is expected.
+`changed`에 속한 슬라이드 번호마다 `png_dir/slide-<N>.png`를 열어 `SPEC_SCHEMA.md` 형식에 맞는 요구사항 조각으로 추출한다.
 
-### 2. Extract changed slides only (vision)
+- 같은 요구사항이 계속 존재한다고 판단되면 기존 `REQ-####` ID를 재사용하고, 정말 새로운 요구사항일 때만 새 ID를 부여한다.
+- `unchanged` 슬라이드는 절대 열지 않는다 — `.cache/manifest.json`의 캐시된 조각을 그대로 재사용한다.
+- 캐시된 조각(미변경) + 새로 추출한 조각(변경)을 합쳐 `spec.yaml`을 조립한다.
 
-For each slide number in `changed`, open `png_dir/slide-<N>.png` and extract its
-requirements into fragments that match `SPEC_SCHEMA.md`. Rules:
-
-- Reuse the existing `REQ-####` ID when the same requirement is clearly still present;
-  mint a new ID only for genuinely new requirements.
-- Down-scale before sending: a slide PNG wider than ~1600px on its long edge wastes
-  vision tokens with no accuracy gain. `detect_changes.py` already caps width; do not
-  up-res.
-- Do NOT open slides in `unchanged`. Reuse their fragments from `.cache/manifest.json`.
-
-Then assemble the full spec: cached fragments for unchanged slides + freshly extracted
-fragments for changed slides → write `spec.yaml`.
-
-### 3. Validate
+### 3. 검증
 
 ```bash
 python scripts/validate_spec.py spec.yaml
 ```
 
-Fails loudly if any requirement is missing a required field (see `SPEC_SCHEMA.md`).
-If it fails, name the specific `REQ-####` and its missing field and ask the user —
-do not invent the missing content.
+필수 필드가 빠진 요구사항이 있으면 실패하며 어떤 `REQ-####`의 어떤 필드가 빠졌는지 구체적으로 알려준다. 실패하면 내용을 임의로 지어내지 말고 해당 REQ ID/필드를 짚어 사용자에게 확인한다.
 
-### 4. Diff against the previous version
+### 4. 이전 버전과 diff
 
 ```bash
 python scripts/diff_spec.py OLD_spec.yaml spec.yaml --out delta.md
 ```
 
-Produces a per-requirement change report (added / removed / modified, field by field)
-that is safe to paste into a PR. This is the artifact developers read instead of
-flipping through slides.
+요구사항 단위로 추가/삭제/수정(필드별)을 정리한 `delta.md`를 만든다. PR에 그대로 붙여넣을 수 있는 산출물이다.
 
-### 5. Regenerate acceptance criteria for changed requirements only
+### 5. 변경된 요구사항만 인수조건 재생성
 
-For every `REQ-####` that `diff_spec.py` marks added or modified, write AC using the
-exact Given/When/Then structure in `AC_TEMPLATE.md`. Leave AC for unchanged
-requirements untouched. Append/update them in `acceptance_criteria.md`.
+`diff_spec.py`가 추가/수정으로 표시한 `REQ-####`에 대해서만 `AC_TEMPLATE.md`의 Given/When/Then 형식으로 AC를 작성해 `acceptance_criteria.md`에 반영한다. 미변경 요구사항의 AC는 건드리지 않는다.
 
-### 6. Commit the set
+### 6. 커밋 대상 안내
 
-Tell the user to commit `NEW.pptx`, `spec.yaml`, `.cache/manifest.json`,
-`delta.md`, and `acceptance_criteria.md` together so the next version bump can diff
-against this one.
+`NEW.pptx`, `spec.yaml`, `.cache/manifest.json`, `delta.md`, `acceptance_criteria.md`를 함께 커밋하도록 사용자에게 안내한다 — 다음 버전 비교의 기준이 된다.
 
-## Reference files
+## 참고 파일
 
-- `SPEC_SCHEMA.md` — the exact shape of a requirement in `spec.yaml` (read before
-  extracting).
-- `AC_TEMPLATE.md` — Given/When/Then format with worked examples (read before writing
-  AC).
+- `SPEC_SCHEMA.md` — `spec.yaml` 요구사항 항목의 정확한 형식 (추출 전에 읽는다).
+- `AC_TEMPLATE.md` — Given/When/Then 형식과 예시 (AC 작성 전에 읽는다).
 
-## Dependencies
+## 의존성
 
-`libreoffice` (or `soffice`) and `pdftoppm` for rendering; Python `Pillow` and
-`PyYAML`. `python-pptx` is used for XML-level hashing when present. All hashing is
-pure-Python; no `imagehash` needed. If a tool is missing, tell the user rather than
-falling back to full-deck vision.
+`libreoffice`(또는 `soffice`)와 `pdftoppm`(렌더링용), Python `Pillow`와 `PyYAML`. `python-pptx`가 있으면 XML 레벨 해싱에 사용한다. 해싱은 순수 Python이라 `imagehash`는 필요 없다. 도구가 없으면 사용자에게 알리고, 전체 덱을 vision으로 대체 처리하지 않는다.
+
+## 출력 형식
+
+```
+## PRD 델타 추출 결과: {파일명}
+
+- 처리 모드: {첫 실행 / 버전 비교}
+- 슬라이드: 전체 M장 중 변경 N장 → vision 처리 [슬라이드 번호 목록]
+- spec.yaml: 요구사항 K건 (신규 A건 / 수정 B건 / 삭제 C건)
+- validate_spec.py: {OK / FAIL — 문제 목록}
+- 갱신된 산출물: spec.yaml, delta.md, acceptance_criteria.md, .cache/manifest.json
+
+이 산출물(spec.yaml, delta.md)을 prd-review 완전성 검토의 입력으로 전달한다.
+```
