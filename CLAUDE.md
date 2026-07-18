@@ -4,7 +4,7 @@
 
 ## 트리거
 
-사용자가 PRD/기획서 파일을 제공하면(첨부, 경로 언급, 또는 붙여넣기) 아래 파이프라인을 자동으로 시작합니다. 사용자가 특정 단계만 명시적으로 요청한 경우 해당 단계만 수행합니다.
+사용자가 PRD/기획서 파일을 제공하면(첨부, 경로 언급, 또는 붙여넣기) 아래 파이프라인을 자동으로 시작합니다. PRD가 `.pptx`면 [0단계](`prd-delta-extractor`)부터, 그 외 텍스트/마크다운이면 [1단계](`prd-review`)부터 시작합니다. 사용자가 특정 단계만 명시적으로 요청한 경우 해당 단계만 수행합니다.
 
 ## 리더-팀원 구조
 
@@ -13,7 +13,7 @@
 - **팀원 결과는 리더만 읽고, 리더가 걸러서 다음 팀원에게 전달합니다.** 예를 들어 `code-verifier`의 FAIL 피드백을 `backend-implementer`에게 그대로 전달하지 않고, 리더가 관련 있는 내용만 추려 새 메시지로 구성해 전달합니다. 팀원이 다른 팀원의 원본 출력을 직접 보는 일은 없습니다.
 - **팀원은 하나의 파이프라인 실행(하나의 PRD를 완료 보고 또는 에스컬레이션까지 처리하는 사이클) 동안 `Agent`로 최초 1회만 스폰됩니다.** 이후 같은 실행 내에서 재작업·재검증 등 후속 요청은 새로 스폰하지 않고 **`SendMessage`로 이름을 지정해 같은 인스턴스에 이어서** 전달합니다. 스폰된 에이전트는 자신의 이전 작업 맥락(무엇을 구현했는지, 어떤 지적을 받았는지)을 그대로 유지한 채 이어받으므로, 매번 처음부터 설명할 필요가 없습니다.
 - 완전히 새로운 PRD로 파이프라인을 다시 시작할 때만 팀원을 새로 스폰합니다.
-- 스킬(`prd-review`, `convention-check`, `pr-description-generator`, `retry-postmortem`)은 별도 인스턴스가 아니라 **리더가 자신의 컨텍스트에서 직접 수행하는 절차**입니다. 팀원과 달리 SendMessage 대상이 아닙니다.
+- 스킬(`prd-delta-extractor`, `prd-review`, `convention-check`, `pr-description-generator`, `retry-postmortem`)은 별도 인스턴스가 아니라 **리더가 자신의 컨텍스트에서 직접 수행하는 절차**입니다. 팀원과 달리 SendMessage 대상이 아닙니다.
 
 ## 공유 작업 목록
 
@@ -21,6 +21,7 @@
 
 | 태스크 | owner |
 |---|---|
+| PRD 델타 추출 (PPTX일 때만) | 리더 (직접 수행) |
 | PRD 완전성 검토 | 리더 (직접 수행) |
 | PRD 보완 초안 (critical 있을 때만) | `prd-completion-assistant` |
 | 백엔드 구현 | `backend-implementer` |
@@ -36,9 +37,15 @@
 
 ## 파이프라인
 
+### 0단계 — PRD 사전 처리 (`prd-delta-extractor` 스킬, PRD가 `.pptx`일 때만, 리더가 직접 수행)
+
+- PRD/기획서가 `.pptx` 파일로 제공된 경우에만 실행한다. 텍스트/마크다운 PRD는 이 단계를 건너뛰고 곧바로 1단계로 진행한다.
+- 변경 게이트(로컬, 무료) → 변경된 슬라이드만 vision으로 추출 → `spec.yaml`/`delta.md`/`acceptance_criteria.md` 생성까지 수행한다.
+- 산출물(`spec.yaml`, 있다면 `delta.md`)을 1단계 `prd-review`의 검토 대상으로 넘긴다.
+
 ### 1단계 — PRD 완전성 검토 (`prd-review` 스킬, 리더가 직접 수행)
 
-- `prd-review` 스킬로 PRD의 완전성을 검토하고 심각도별 이슈 목록을 받는다.
+- (0단계를 거쳤다면 그 결과 `spec.yaml`을, 거치지 않았다면 원본 PRD 문서를) `prd-review` 스킬로 완전성 검토하고 심각도별 이슈 목록을 받는다.
 - **Critical 이슈가 있으면**: 파이프라인을 여기서 중단하고 "PRD 보완 초안" 태스크를 만든 뒤 `prd-completion-assistant`를 `Agent`로 스폰해 누락 항목별 보완 초안을 제시한다. 초안은 자동으로 PRD에 반영되지 않으며, 사용자가 검토·반영한 뒤 PRD를 다시 제공하면 1단계를 재실행한다 (같은 PRD의 재보완 요청이면 새 인스턴스 대신 `SendMessage`로 기존 `prd-completion-assistant`에 이어서 요청한다).
 - Critical 이슈가 없으면 (major/minor는 참고용으로 함께 제시하고) 2단계로 진행한다.
 
@@ -87,6 +94,9 @@
 PRD 입력
   │
   ▼
+[0] prd-delta-extractor 스킬(리더, .pptx일 때만) ──▶ spec.yaml / delta.md
+  │ (텍스트/마크다운 PRD는 건너뜀)
+  ▼
 [1] prd-review 스킬(리더) ──critical 있음──▶ [1a] prd-completion-assistant 팀원
   │ critical 없음                              (보완 초안 제시, 자동 반영 안 함)
   ▼                                            │
@@ -117,6 +127,7 @@ PRD 입력
 
 | 컴포넌트 | 위치 | 책임 | 통신 방식 |
 |---|---|---|---|
+| `prd-delta-extractor` 스킬 | `.claude/skills/prd-delta-extractor/SKILL.md` | `.pptx` PRD에서 변경 슬라이드만 vision 추출 → `spec.yaml`/`delta.md`/AC 생성 (PRD가 `.pptx`일 때만, 1단계보다 먼저) | 리더가 직접 수행 |
 | `prd-review` 스킬 | `.claude/skills/prd-review/SKILL.md` | PRD 완전성 검토, 심각도별 이슈 목록 출력 | 리더가 직접 수행 |
 | `prd-completion-assistant` 팀원 | `.claude/agents/prd-completion-assistant.md` | Critical 누락 항목 보완 초안 제시 (PRD 직접 수정 안 함) | 리더가 Agent 최초 스폰 → SendMessage로 이어감 |
 | `backend-implementer` 팀원 | `.claude/agents/backend-implementer.md` | Spring 구현 + 단위 테스트 작성 | 리더가 Agent 최초 스폰 → SendMessage로 이어감 |
@@ -135,6 +146,7 @@ PRD 입력
 - **진행 상황은 팀원이 공유 작업 목록에 직접 기록한다.** 리더가 프로즈 보고를 듣고 대신 태스크를 갱신하는 것이 아니라, 팀원 자신이 `TaskUpdate`로 상태와 시도 회차를 남긴다. 이는 대화 압축·요약에도 살아남는 구조적 기록이다.
 - 각 컴포넌트는 자신의 책임 범위를 벗어나지 않는다 — `backend-implementer`는 스스로를 검증하지 않고, `code-verifier`/`security-reviewer`/`integration-tester`(테스트 코드 제외)는 프로덕션 코드를 직접 고치지 않는다.
 - `prd-completion-assistant`는 PRD를 직접 수정하지 않는다 — 초안 제안과 실제 반영은 항상 분리한다.
+- `prd-delta-extractor`는 PRD가 `.pptx`일 때만 실행되는 0단계 선행 처리이며, 원본 `.pptx`는 수정하지 않고 `spec.yaml`/`delta.md`/`acceptance_criteria.md`/`.cache/manifest.json`만 산출한다. `prd-review`를 대체하지 않는다 — 완전성 판정은 여전히 `prd-review`가 내린다.
 - `convention-check`는 파이프라인을 막지 않는다. `pr-description-generator`는 텍스트 산출물만 만들 뿐 실제 git/PR 조작을 하지 않는다.
 - 단계를 건너뛰지 않는다. Critical 이슈가 있는 PRD로 구현을 시작하지 않으며, 3a(기능)를 통과하지 못한 구현으로 3b(보안/통합)를 실행하지 않는다.
 - 재작업 루프는 무한 반복하지 않는다 — 3a는 3회, 3b는 2회를 넘으면 반드시 사람에게 넘긴다. 두 루프의 재시도 카운터는 서로 독립적으로 추적하며, 태스크 metadata를 근거로 판단한다.
