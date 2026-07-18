@@ -141,13 +141,12 @@ PRD 입력
 ## 원칙
 
 - **리더는 하나뿐이다.** 최상위 세션 자체가 리더 역할을 하며, 별도 리더 에이전트를 스폰하지 않는다.
-- **팀원끼리는 직접 연락하지 않는다.** `Agent` 도구를 팀원에게 주지 않는 것으로 팀원이 또 다른 팀원을 스폰하는 것은 구조적으로 막는다. 이 PRD 파이프라인 안에서는 모든 정보 교환을 리더가 중계한다 — `security-reviewer`/`integration-tester`가 `SendMessage`를 갖고 있어도(아래 각주 참고) [3b] 단계에서는 이 원칙 그대로 리더에게만 보고한다.
+- **팀원끼리는 직접 연락하지 않는다.** `Agent`/`SendMessage` 도구를 팀원에게 주지 않는 것으로 구조적으로 강제한다. 모든 정보 교환은 리더가 중계한다.
 - **팀원은 파이프라인 실행당 한 번만 스폰하고, 이후는 SendMessage로 같은 인스턴스에 이어간다.** 매번 새로 스폰하면 이전 작업 맥락(무엇을 왜 그렇게 했는지)이 유실되어 재작업 품질이 떨어진다.
 - **진행 상황은 팀원이 공유 작업 목록에 직접 기록한다.** 리더가 프로즈 보고를 듣고 대신 태스크를 갱신하는 것이 아니라, 팀원 자신이 `TaskUpdate`로 상태와 시도 회차를 남긴다. 이는 대화 압축·요약에도 살아남는 구조적 기록이다.
 - 각 컴포넌트는 자신의 책임 범위를 벗어나지 않는다 — `backend-implementer`는 스스로를 검증하지 않고, `code-verifier`/`security-reviewer`/`integration-tester`(테스트 코드 제외)는 프로덕션 코드를 직접 고치지 않는다.
 - `prd-completion-assistant`는 PRD를 직접 수정하지 않는다 — 초안 제안과 실제 반영은 항상 분리한다.
 - `prd-delta-extractor`는 PRD가 `.pptx`일 때만 실행되는 0단계 선행 처리이며, 원본 `.pptx`는 수정하지 않고 `spec.yaml`/`delta.md`/`acceptance_criteria.md`/`.cache/manifest.json`만 산출한다. `prd-review`를 대체하지 않는다 — 완전성 판정은 여전히 `prd-review`가 내린다.
-- **예외**: `security-reviewer`/`integration-tester`는 `.claude/skills/pr-team-review/SKILL.md`(이 PRD 파이프라인과 별개로, 임의의 PR/diff를 리뷰하는 스킬)에서 서로 피어로 통신하기 위해 `SendMessage`를 보유한다. 이 두 에이전트 파일은 두 워크플로우에서 공유되지만, 위 "팀원끼리는 직접 연락하지 않는다" 원칙은 **PRD 파이프라인 [3b] 단계에서는 그대로 유지**된다 — `SendMessage`를 실제로 다른 팀원에게 쓰는 것은 `pr-team-review` 실행 중일 때뿐이다.
 - `convention-check`는 파이프라인을 막지 않는다. `pr-description-generator`는 텍스트 산출물만 만들 뿐 실제 git/PR 조작을 하지 않는다.
 - 단계를 건너뛰지 않는다. Critical 이슈가 있는 PRD로 구현을 시작하지 않으며, 3a(기능)를 통과하지 못한 구현으로 3b(보안/통합)를 실행하지 않는다.
 - 재작업 루프는 무한 반복하지 않는다 — 3a는 3회, 3b는 2회를 넘으면 반드시 사람에게 넘긴다. 두 루프의 재시도 카운터는 서로 독립적으로 추적하며, 태스크 metadata를 근거로 판단한다.
