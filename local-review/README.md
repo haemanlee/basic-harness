@@ -11,6 +11,7 @@ Claude Code를 활용해 MR을 올리기 전에 개인 로컬 환경에서 코�
 - MEDIUM 위험: Backend + Production Reviewer (Sonnet)
 - HIGH 위험: Backend + Production Reviewer (Sonnet) + Adversarial Reviewer (Opus)
 - 실행 결과는 작업 레포 밖의 `~/.claude-local-review/runs/<repo>/<timestamp>`에 저장합니다.
+- 리뷰 결과와 마지막 리뷰한 commit SHA는 `~/.claude-local-review/state/<repo>/`에 저장합니다.
 
 ## 설치
 
@@ -58,6 +59,53 @@ MR 생성
 ```
 
 위험도 분류 자체에는 LLM을 사용하지 않고 변경 경로, diff 크기, 위험 키워드 등을 이용한 deterministic rule을 사용합니다. 단순 라우팅에 불필요한 토큰을 사용하지 않기 위한 설계입니다.
+
+## pre-push 자동 리뷰 가드
+
+개발자가 MR 전 `ai-review` 실행을 잊는 것을 줄이기 위해, 원하는 작업 레포지토리에서 로컬 `pre-push` hook을 설치할 수 있습니다.
+
+하네스 설치 후 대상 레포지토리에서 실행합니다.
+
+```bash
+~/.claude-local-review/scripts/install-pre-push.sh
+```
+
+이 hook은 해당 레포의 `.git/hooks/pre-push`에만 설치되므로 Git에 커밋되지 않습니다. 기존 `pre-push` hook이 있다면 먼저 timestamp가 붙은 backup 파일로 복사합니다.
+
+이후 평소처럼 `git push`만 하면 됩니다.
+
+```text
+git push
+  ↓
+현재 HEAD가 이미 리뷰됐는지 확인
+  ├─ PASS → 바로 push
+  ├─ P2   → 경고 후 push
+  └─ 미리뷰 → ai-review 자동 실행
+                  ↓
+              P0/P1 → push 중단
+              PASS/P2 → push 계속
+```
+
+리뷰 결과 정책은 다음과 같습니다.
+
+```text
+P0 → BLOCK
+P1 → BLOCK
+P2 → WARN
+PASS → PUSH
+```
+
+이미 같은 HEAD를 리뷰했다면 다시 Claude를 호출하지 않으므로 불필요한 토큰 사용을 줄입니다.
+
+긴급하게 AI 리뷰를 의도적으로 우회해야 할 때는 Git의 표준 hook 우회 기능을 사용할 수 있습니다.
+
+```bash
+git push --no-verify
+```
+
+Claude CLI 장애나 사용량 제한 때문에 개발 자체가 막히는 것을 방지하기 위한 escape hatch입니다.
+
+working tree에 아직 commit되지 않은 tracked 변경이 있으면 pre-push 시 경고하지만, 해당 변경은 실제 push 대상이 아니므로 리뷰 범위에도 포함하지 않습니다.
 
 ## 리뷰어 역할
 
@@ -112,6 +160,9 @@ MR 생성
   backend-review.md
   production-review.md   # MEDIUM/HIGH인 경우
   adversarial-review.md  # HIGH인 경우
+
+~/.claude-local-review/state/<repo>/
+  last-review.env
 ```
 
 따라서 대상 레포지토리에서 `git status`를 실행해도 리뷰 하네스 실행으로 인한 파일 변경이 발생하지 않습니다.
@@ -161,7 +212,8 @@ v0.1 단계에서는 CI나 merge gate로 사용하지 않습니다.
 - 리뷰 수행 시간
 - 토큰 사용량
 - LOW / MEDIUM / HIGH 라우팅이 적절했는지
+- pre-push 자동 실행이 실제 개발 흐름에 방해가 되는지
 
 실제 효과가 확인된 이후에만 팀 레포지토리의 `.claude/` 설정이나 공용 스크립트로 승격하는 것을 목표로 합니다.
 
-초기 목표는 AI 리뷰를 강제하는 것이 아니라 **개발자가 MR을 올리기 전에 저비용으로 독립적인 리뷰 관점을 추가하는 것**입니다.
+초기 목표는 AI 리뷰를 강제하는 것이 아니라 **개발자가 MR을 올리기 전에 저비용으로 독립적인 리뷰 관점을 추가하고, 실수로 리뷰를 놓치는 경우를 로컬 hook으로 보완하는 것**입니다.
