@@ -43,8 +43,8 @@ if [ "$RISK" = HIGH ]; then
   run_reviewer adversarial opus
 fi
 
-HEAD_SHA="$(git rev-parse HEAD)"
-printf 'HEAD_SHA=%q\n' "$HEAD_SHA" > "$STATE_FILE"
+REVIEWED_HEAD_SHA="$(git rev-parse HEAD)"
+printf 'REVIEWED_HEAD_SHA=%q\n' "$REVIEWED_HEAD_SHA" > "$STATE_FILE"
 printf 'RESULT=%q\n' "$RESULT" >> "$STATE_FILE"
 printf 'RISK=%q\n' "$RISK" >> "$STATE_FILE"
 printf 'RUN_DIR=%q\n' "$RUN_DIR" >> "$STATE_FILE"
