@@ -1,0 +1,32 @@
+base_branch: origin/main
+
+review:
+  max_findings: 5
+  medium_changed_lines: 150
+  high_changed_lines: 500
+  max_diff_lines: 1200
+
+models:
+  backend: sonnet
+  production: sonnet
+  adversarial: opus
+  aggregator: haiku
+
+risk:
+  high_paths:
+    - reward/
+    - payment/
+    - withdrawal/
+    - settlement/
+    - auth/
+    - security/
+    - migration/
+  high_keywords:
+    - "@Transactional"
+    - retry
+    - idempotency
+    - lock
+    - "SELECT FOR UPDATE"
+    - INSERT
+    - UPDATE
+    - DELETE
